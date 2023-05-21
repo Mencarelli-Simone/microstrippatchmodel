@@ -1,0 +1,230 @@
+<html>
+<head>
+<title>microstrip_fit.ipynb</title>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<style type="text/css">
+.s0 { color: #8c8c8c; font-style: italic;}
+.s1 { color: #0033b3;}
+.s2 { color: #080808;}
+.s3 { color: #1750eb;}
+.s4 { color: #067d17;}
+</style>
+</head>
+<body bgcolor="#ffffff">
+<table CELLSPACING=0 CELLPADDING=5 COLS=1 WIDTH="100%" BGCOLOR="#c0c0c0" >
+<tr><td><center>
+<font face="Arial, Helvetica" color="#000000">
+microstrip_fit.ipynb</font>
+</center></td></tr></table>
+<pre><span class="s0">#%% 
+</span><span class="s1">import </span><span class="s2">numpy </span><span class="s1">as </span><span class="s2">np</span>
+<span class="s1">import </span><span class="s2">matplotlib.pyplot </span><span class="s1">as </span><span class="s2">plt</span>
+<span class="s1">from </span><span class="s2">scipy.optimize </span><span class="s1">import </span><span class="s2">fsolve, minimize, minimize_scalar</span>
+<span class="s0">#%% md 
+</span><span class="s2"># Model 
+</span><span class="s0">#%% md 
+</span><span class="s2">Microstrip cavity model from Balanis, for the first mode 
+</span><span class="s0">#%% 
+</span><span class="s1">def </span><span class="s2">er_eff_min(er, h, W):  </span><span class="s0"># SEE BALANIS</span>
+    <span class="s1">return </span><span class="s2">(er + </span><span class="s3">1</span><span class="s2">) / </span><span class="s3">2 </span><span class="s2">+ (er - </span><span class="s3">1</span><span class="s2">) / </span><span class="s3">2 </span><span class="s2">* (</span><span class="s3">1 </span><span class="s2">+ </span><span class="s3">12 </span><span class="s2">* h / W) ** (-</span><span class="s3">1 </span><span class="s2">/ </span><span class="s3">2</span><span class="s2">)</span>
+
+
+<span class="s1">def </span><span class="s2">delta_l(er_eff, h, W):</span>
+    <span class="s1">return </span><span class="s2">h * </span><span class="s3">0.412 </span><span class="s2">* (er_eff + </span><span class="s3">0.3</span><span class="s2">) * (W / h + </span><span class="s3">0.264</span><span class="s2">) / ((er_eff - </span><span class="s3">0.258</span><span class="s2">) * (W / h + </span><span class="s3">0.8</span><span class="s2">))</span>
+
+
+<span class="s1">def </span><span class="s2">l_eff(l, er_eff, h, W):</span>
+    <span class="s1">return </span><span class="s2">delta_l(er_eff, h, W) * </span><span class="s3">2 </span><span class="s2">+ l</span>
+
+
+<span class="s1">def </span><span class="s2">f010(l, h, W, er_eff, c=</span><span class="s3">299792458</span><span class="s2">):</span>
+    <span class="s2">leff = l_eff(l, er_eff, h, W)</span>
+    <span class="s1">return </span><span class="s2">c / (</span><span class="s3">2 </span><span class="s2">* leff * np.sqrt(er_eff))</span>
+<span class="s0">#%% md 
+</span><span class="s2">According to 14.2.1 the $\epsilon_r_{eff}$ varies between the minimum one, at low frequency and increases at higher frequencies 
+</span><span class="s0">#%% 
+</span><span class="s1">def </span><span class="s2">er(delta, er, er_min):</span>
+    <span class="s1">return </span><span class="s2">er_min + delta * (er - er_min)</span>
+<span class="s0">#%% md 
+</span><span class="s2">The goal here is to estimate delta from the simulations and see how it varies in frequency with respect to dielectric constant and frequency 
+</span><span class="s0">#%% md 
+</span><span class="s2"># Simulation results 
+</span><span class="s0">#%% 
+#known</span>
+<span class="s2">h = </span><span class="s3">0.4e-3</span>
+<span class="s2">epsilon = np.array([</span><span class="s3">3</span><span class="s2">, </span><span class="s3">4</span><span class="s2">, </span><span class="s3">5</span><span class="s2">, </span><span class="s3">6</span><span class="s2">])</span>
+<span class="s2">l = np.array([</span><span class="s3">7</span><span class="s2">, </span><span class="s3">8</span><span class="s2">]) * </span><span class="s3">1e-3</span>
+<span class="s2">E, L = np.meshgrid(epsilon, l)</span>
+
+<span class="s0"># resonances from matlab postprocessing</span>
+<span class="s2">freqs = np.array([[</span><span class="s3">11.6207</span><span class="s2">, </span><span class="s3">10.1696</span><span class="s2">, </span><span class="s3">9.1650</span><span class="s2">, </span><span class="s3">8.4061</span><span class="s2">],</span>
+                  <span class="s2">[</span><span class="s3">10.2432</span><span class="s2">, </span><span class="s3">8.9649</span><span class="s2">, </span><span class="s3">8.0819</span><span class="s2">, float(</span><span class="s4">&quot;nan&quot;</span><span class="s2">)]]) * </span><span class="s3">1e9</span>
+<span class="s0">#%% 
+</span><span class="s2">fig, ax = plt.subplots(</span><span class="s3">1</span><span class="s2">)</span>
+<span class="s2">c = ax.pcolormesh(E, L * </span><span class="s3">1000</span><span class="s2">, freqs * </span><span class="s3">1e-9</span><span class="s2">)</span>
+<span class="s2">ax.set_xlabel(</span><span class="s4">'epsilon'</span><span class="s2">)</span>
+<span class="s2">ax.set_ylabel(</span><span class="s4">'side length [mm]'</span><span class="s2">)</span>
+<span class="s2">fig.colorbar(c)</span>
+<span class="s2">ax.set_title(</span><span class="s4">'resonances [GHz]'</span><span class="s2">)</span>
+<span class="s0">#%% md 
+</span><span class="s2"># Direct inversion 
+</span><span class="s0">#%% 
+</span><span class="s2">eest = []</span>
+<span class="s1">for </span><span class="s2">ii </span><span class="s1">in </span><span class="s2">range(len(E.flatten())):</span>
+    <span class="s2">l = L.flatten()[ii]</span>
+    <span class="s2">freq = freqs.flatten()[ii]</span>
+    <span class="s2">invertible = </span><span class="s1">lambda </span><span class="s2">epsilon: f010(l, h, l, er_eff_min(epsilon, h, l)) - freq</span>
+    <span class="s2">print(fsolve(invertible, </span><span class="s3">1</span><span class="s2">))</span>
+    <span class="s2">eest.append(fsolve(invertible, </span><span class="s3">1</span><span class="s2">))</span>
+<span class="s0">#%% 
+</span><span class="s2">eest = np.array(eest).flatten()</span>
+<span class="s2">eest = np.reshape(eest, E.shape)</span>
+<span class="s2">eest</span>
+
+<span class="s0"># error</span>
+<span class="s2">error = (E - eest)/E</span>
+<span class="s2">error</span>
+<span class="s0">#%% 
+</span><span class="s2">fig, ax = plt.subplots(</span><span class="s3">1</span><span class="s2">)</span>
+<span class="s2">c = ax.pcolormesh(E, L * </span><span class="s3">1000</span><span class="s2">, error, vmin=-</span><span class="s3">.2</span><span class="s2">, vmax=</span><span class="s3">.2</span><span class="s2">)</span>
+<span class="s2">ax.set_xlabel(</span><span class="s4">'epsilon'</span><span class="s2">)</span>
+<span class="s2">ax.set_ylabel(</span><span class="s4">'side length [mm]'</span><span class="s2">)</span>
+<span class="s2">fig.colorbar(c)</span>
+<span class="s2">ax.set_title(</span><span class="s4">'$\epsilon / \epsilon_{est}$'</span><span class="s2">)</span>
+<span class="s0">#%% 
+</span><span class="s2">fig, ax = plt.subplots(</span><span class="s3">1</span><span class="s2">)</span>
+<span class="s2">ax.scatter(freqs.flatten() / </span><span class="s3">1e9</span><span class="s2">, error.flatten())</span>
+<span class="s0">#%% md 
+</span><span class="s2"># Re-Fitting 
+find a delta that minimizes the error 
+</span><span class="s0">#%% 
+</span><span class="s2">E.flatten()</span>
+<span class="s0">#%% 
+</span><span class="s1">def </span><span class="s2">error(delta):</span>
+    <span class="s2">sq = </span><span class="s3">0</span>
+    <span class="s1">for </span><span class="s2">ii </span><span class="s1">in </span><span class="s2">range(len(E.flatten())-</span><span class="s3">1</span><span class="s2">):</span>
+        <span class="s2">l = L.flatten()[ii]</span>
+        <span class="s2">e = E.flatten()[ii]</span>
+        <span class="s2">freq = freqs.flatten()[ii]</span>
+        <span class="s2">invertible = </span><span class="s1">lambda </span><span class="s2">epsilon: f010(l, h, l, er(delta, epsilon, er_eff_min(epsilon, h, l))) - freq</span>
+        <span class="s2">epsilon = fsolve(invertible, </span><span class="s3">1</span><span class="s2">)</span>
+        <span class="s2">error = (e - epsilon) / e</span>
+        <span class="s2">sq += error ** </span><span class="s3">2</span>
+    <span class="s2">sq /= len(E.flatten())-</span><span class="s3">1</span>
+    <span class="s1">return </span><span class="s2">sq</span>
+<span class="s0">#%% 
+</span><span class="s2">res = minimize_scalar(error)</span>
+<span class="s0">#%% 
+</span><span class="s2">res</span>
+<span class="s0">#%% 
+</span>
+<span class="s0">#%% md 
+</span><span class="s2"># Refined Inversion 
+use the optimized delta value (to be used in measurements too) 
+ 
+</span><span class="s0">#%% 
+</span><span class="s2">delta = </span><span class="s3">0.9622</span>
+<span class="s2">eest = []</span>
+<span class="s1">for </span><span class="s2">ii </span><span class="s1">in </span><span class="s2">range(len(E.flatten())):</span>
+    <span class="s2">l = L.flatten()[ii]</span>
+    <span class="s2">freq = freqs.flatten()[ii]</span>
+    <span class="s2">invertible = </span><span class="s1">lambda </span><span class="s2">epsilon: f010(l, h, l, er(delta, epsilon, er_eff_min(epsilon, h, l))) - freq</span>
+    <span class="s2">print(fsolve(invertible, </span><span class="s3">1</span><span class="s2">))</span>
+    <span class="s2">eest.append(fsolve(invertible, </span><span class="s3">1</span><span class="s2">))</span>
+<span class="s0">#%% 
+</span><span class="s2">eest = np.array(eest).flatten()</span>
+<span class="s2">eest = np.reshape(eest, E.shape)</span>
+<span class="s2">eest</span>
+
+<span class="s0"># error</span>
+<span class="s2">error = (E - eest)/E</span>
+<span class="s2">error</span>
+<span class="s0">#%% 
+</span><span class="s2">fig, ax = plt.subplots(</span><span class="s3">1</span><span class="s2">)</span>
+<span class="s2">c = ax.pcolormesh(E, L * </span><span class="s3">1000</span><span class="s2">, error, vmin=-</span><span class="s3">.02</span><span class="s2">, vmax=</span><span class="s3">.02</span><span class="s2">)</span>
+<span class="s2">ax.set_xlabel(</span><span class="s4">'epsilon'</span><span class="s2">)</span>
+<span class="s2">ax.set_ylabel(</span><span class="s4">'side length [mm]'</span><span class="s2">)</span>
+<span class="s2">fig.colorbar(c)</span>
+<span class="s2">ax.set_title(</span><span class="s4">'$\epsilon / \epsilon_{est}$'</span><span class="s2">)</span>
+<span class="s0">#%% 
+</span><span class="s2">fig, ax = plt.subplots(</span><span class="s3">1</span><span class="s2">)</span>
+<span class="s2">ax.scatter(freqs.flatten() / </span><span class="s3">1e9</span><span class="s2">, error.flatten())</span>
+<span class="s0">#%% md 
+</span><span class="s2"># Sensitivity analysis 
+based on the corrected microstrip model 
+</span><span class="s0">#%% md 
+</span><span class="s2">substrate height 
+</span><span class="s0">#%% 
+# +- 50um variation of height</span>
+<span class="s2">h2 = h + </span><span class="s3">50e-6</span>
+<span class="s2">h1 = h - </span><span class="s3">50e-6</span>
+<span class="s2">delta_h = </span><span class="s3">100e-6</span>
+
+<span class="s0"># resulting epsilon</span>
+<span class="s2">eest2 = []</span>
+<span class="s1">for </span><span class="s2">ii </span><span class="s1">in </span><span class="s2">range(len(E.flatten())-</span><span class="s3">1</span><span class="s2">):</span>
+    <span class="s2">l = L.flatten()[ii]</span>
+    <span class="s2">freq = freqs.flatten()[ii]</span>
+    <span class="s2">invertible = </span><span class="s1">lambda </span><span class="s2">epsilon: f010(l, h2, l, er(delta, epsilon, er_eff_min(epsilon, h2, l))) - freq</span>
+    <span class="s0">#print(fsolve(invertible, 1))</span>
+    <span class="s2">eest2.append(fsolve(invertible, </span><span class="s3">1</span><span class="s2">))</span>
+
+<span class="s2">eest2 = np.array(eest2).flatten()</span>
+
+<span class="s2">eest1 = []</span>
+<span class="s1">for </span><span class="s2">ii </span><span class="s1">in </span><span class="s2">range(len(E.flatten())-</span><span class="s3">1</span><span class="s2">):</span>
+    <span class="s2">l = L.flatten()[ii]</span>
+    <span class="s2">freq = freqs.flatten()[ii]</span>
+    <span class="s2">invertible = </span><span class="s1">lambda </span><span class="s2">epsilon: f010(l, h1, l, er(delta, epsilon, er_eff_min(epsilon, h1, l))) - freq</span>
+    <span class="s0">#print(fsolve(invertible, 1))</span>
+    <span class="s2">eest1.append(fsolve(invertible, </span><span class="s3">1</span><span class="s2">))</span>
+<span class="s2">eest1 = np.array(eest1).flatten()</span>
+<span class="s0"># delta epsilon</span>
+<span class="s2">delta_e = eest2 - eest1</span>
+
+<span class="s2">Sh = delta_e / delta_h</span>
+<span class="s2">print(Sh, </span><span class="s4">' per m'</span><span class="s2">)</span>
+<span class="s2">print(</span><span class="s4">'to maintain this error below 1% the height has to be known with an accuracy of '</span><span class="s2">, np.abs(</span><span class="s3">1</span><span class="s2">/(</span><span class="s3">100</span><span class="s2">*Sh)*</span><span class="s3">1e6</span><span class="s2">), </span><span class="s4">'um'</span><span class="s2">)</span>
+<span class="s0">#%% md 
+</span><span class="s2">patch length 
+</span><span class="s0">#%% 
+# +- 100um variation of Length</span>
+<span class="s2">L2 = L + </span><span class="s3">50e-6</span>
+<span class="s2">L1 = L - </span><span class="s3">50e-6</span>
+<span class="s2">delta_le = </span><span class="s3">100e-6</span>
+<span class="s2">print(L2)</span>
+
+<span class="s0"># resulting epsilon</span>
+<span class="s2">eest2 = []</span>
+<span class="s1">for </span><span class="s2">ii </span><span class="s1">in </span><span class="s2">range(len(E.flatten())-</span><span class="s3">1</span><span class="s2">):</span>
+    <span class="s2">l = L2.flatten()[ii]</span>
+    <span class="s2">freq = freqs.flatten()[ii]</span>
+    <span class="s2">invertible = </span><span class="s1">lambda </span><span class="s2">epsilon: f010(l, h, l, er(delta, epsilon, er_eff_min(epsilon, h, l))) - freq</span>
+    <span class="s0">#print(invertible)</span>
+    <span class="s0">#print(fsolve(invertible, 5))</span>
+    <span class="s2">eest2.append(fsolve(invertible, </span><span class="s3">5</span><span class="s2">))</span>
+
+<span class="s2">eest2 = np.array(eest2).flatten()</span>
+
+<span class="s2">eest1 = []</span>
+<span class="s1">for </span><span class="s2">ii </span><span class="s1">in </span><span class="s2">range(len(E.flatten())-</span><span class="s3">1</span><span class="s2">):</span>
+    <span class="s2">l = L1.flatten()[ii]</span>
+    <span class="s2">freq = freqs.flatten()[ii]</span>
+    <span class="s2">invertible = </span><span class="s1">lambda </span><span class="s2">epsilon: f010(l, h, l, er(delta, epsilon, er_eff_min(epsilon, h, l))) - freq</span>
+    <span class="s0">#print(fsolve(invertible, 1))</span>
+    <span class="s2">eest1.append(fsolve(invertible, </span><span class="s3">1</span><span class="s2">))</span>
+<span class="s2">eest1 = np.array(eest1).flatten()</span>
+
+<span class="s0"># delta epsilon</span>
+<span class="s2">delta_e = eest2 - eest1</span>
+
+<span class="s2">Sl = delta_e / delta_le</span>
+<span class="s2">print(Sl, </span><span class="s4">' per m'</span><span class="s2">)</span>
+<span class="s2">print(</span><span class="s4">'to maintain this error below 1% the length has to be known with an accuracy of '</span><span class="s2">, np.abs(</span><span class="s3">1</span><span class="s2">/(</span><span class="s3">100</span><span class="s2">*Sl)*</span><span class="s3">1e6</span><span class="s2">), </span><span class="s4">'um'</span><span class="s2">)</span>
+<span class="s0">#%% 
+</span><span class="s2">freqs.flatten()/</span><span class="s3">1e9</span>
+
+<span class="s0">#%% 
+</span></pre>
+</body>
+</html>
